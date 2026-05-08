@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+}
+
+model Payment {
+  id             String         @id @default(uuid()) @db.Uuid
+  amount         Decimal        @db.Decimal(19, 4)
+  currency       String         @db.VarChar(8)
+  status         PaymentStatus  @default(PENDING)
+  metadata       Json?
+  correlationId  String?        @map("correlation_id") @db.VarChar(64)
+  gatewayRef     String?        @map("gateway_ref") @db.VarChar(128)
+  failureReason  String?        @map("failure_reason") @db.Text
+  retryCount     Int            @default(0) @map("retry_count")
+  version        Int            @default(0)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  events        PaymentEvent[]
+  idempotency   IdempotencyKey?
+
+  @@map("payments")
+}
+
+model PaymentEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  type      String   @db.VarChar(64)
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("payment_events")
+}
+
+model IdempotencyKey {
+  key           String   @id @db.VarChar(256)
+  paymentId     String   @unique @map("payment_id") @db.Uuid
+  method        String   @default("POST") @db.VarChar(16)
+  path          String   @default("/payments") @db.VarChar(256)
+  responseBody  Json     @map("response_body")
+  statusCode    Int      @default(201) @map("status_code")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("idempotency_keys")
+}
+
+model Outbox {
+  id          String    @id @default(uuid()) @db.Uuid
+  aggregateId String    @map("aggregate_id") @db.Uuid
+  topic       String    @db.VarChar(128)
+  payload     Json
+  headers     Json?
+  published   Boolean   @default(false)
+  publishedAt DateTime? @map("published_at")
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error") @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([published, createdAt])
+  @@map("outbox")
+}
+
+model WebhookEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  externalId  String   @unique @map("external_id") @db.VarChar(256)
+  paymentId   String   @map("payment_id") @db.Uuid
+  payload     Json
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([paymentId])
+  @@map("webhook_events")
+}
+
+model RetryEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  paymentId   String    @map("payment_id") @db.Uuid
+  retryCount  Int       @map("retry_count")
+  executeAt   DateTime  @map("execute_at")
+  reason      String?   @db.Text
+  processed   Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([processed, executeAt])
+  @@map("retry_events")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  correlationId String?  @map("correlation_id") @db.VarChar(64)
+  action        String   @db.VarChar(128)
+  entityType    String   @map("entity_type") @db.VarChar(64)
+  entityId      String   @map("entity_id") @db.Uuid
+  payload       Json
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
